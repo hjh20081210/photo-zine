@@ -829,7 +829,6 @@ async function onGenerate() {
     setTimeout(() => goSettings(), 650)
     return
   }
-  // ★ 必须取当前激活配置对象，确保生成请求使用用户"创作前选择的那一套"
   const activeCfg = store.getActiveConfig()
   if (!activeCfg) {
     uni.showToast({ title: '请在创作前选择一个模型', icon: 'none' })
@@ -839,68 +838,95 @@ async function onGenerate() {
   genStatus.value = '正在提交…'
   genStep.value = 0
   try {
-    const data = {
-      imageBase64: photo.value ? photo.value.base64 : null,
-      imageMime: photo.value ? photo.value.mime : null,
-      mode: mode.value,
-      sides: sides.value,
-      ratio: { width: ratio.value.w, height: ratio.value.h },
-      style: style.value,
-      paintMode: paintChip.value,
-      paperTexture: paperTexture.value,
-      title: title.value || null,
-      location: location.value || null,
-      date: date.value || null,
-      backMessage: backMessage.value || null,
-      provider: {
-        provider: activeCfg.provider,
-        baseUrl: activeCfg.baseUrl,
-        apiKey: activeCfg.apiKey,
-        model: activeCfg.model,
-        imageInput: activeCfg.imageInput,
-      },
+    // 构造提示词
+    const styleName = styleLabel.value
+    const prompt = `请根据这张照片，生成一张${styleName}风格的明信片/海报。比例：${ratio.value.w}:${ratio.value.h}。${mode.value === 'POSTCARD' ? '明信片模式' : '极简海报模式'}。${paintChip.value === 'original' ? '保留原图风格' : paintChip.value === 'hand_draw_2' ? '手绘风格二创' : '三色块采样风格'}。${title.value ? '标题：' + title.value : ''}${location.value ? '地点：' + location.value : ''}${date.value ? '日期：' + date.value : ''}${backMessage.value ? '背面留言：' + backMessage.value : ''}`
+
+    genStatus.value = '正在请求AI模型…'
+    genStep.value = 1
+
+    // 构建消息内容（包含图片和文字）
+    const content = [{ type: 'text', text: prompt }]
+    if (photo.value && photo.value.base64) {
+      content.push({
+        type: 'image_url',
+        image_url: { url: photo.value.base64 },
+      })
     }
-    const resp = await request('/api/generation', { method: 'POST', data, timeout: 60000 })
-    await poll(resp.taskId)
+
+    // 直接调用 AI 模型 API（OpenAI 兼容格式）
+    const resp = await new Promise((resolve, reject) => {
+      uni.request({
+        url: activeCfg.baseUrl,
+        method: 'POST',
+        timeout: 120000,
+        header: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer ' + activeCfg.apiKey,
+        },
+        data: {
+          model: activeCfg.model,
+          messages: [{ role: 'user', content }],
+          max_tokens: 4096,
+        },
+        success(r) {
+          if (r.statusCode >= 200 && r.statusCode < 300) {
+            resolve(r.data)
+          } else {
+            const errMsg = r.data?.error?.message || r.data?.message || `API 返回 ${r.statusCode}`
+            reject(new Error(errMsg))
+          }
+        },
+        fail(e) {
+          reject(new Error('网络请求失败: ' + (e.errMsg || '连接超时或无网络')))
+        },
+      })
+    })
+
+    genStep.value = 2
+    genStatus.value = '生成完成，准备预览…'
+
+    // 解析响应
+    const text = resp?.choices?.[0]?.message?.content || ''
+    // 尝试从响应中提取图片 URL（如果有图片生成能力）
+    let imageUrl = ''
+    if (resp?.data?.[0]?.url) {
+      imageUrl = resp.data[0].url
+    } else if (resp?.data?.[0]?.b64_json) {
+      imageUrl = 'data:image/png;base64,' + resp.data[0].b64_json
+    }
+    // 尝试从 markdown 图片语法中提取
+    const imgMatch = text.match(/!\[.*?\]\((https?:\/\/[^\s)]+)\)/)
+    if (imgMatch && !imageUrl) {
+      imageUrl = imgMatch[1]
+    }
+
+    genStep.value = 3
+
+    // 保存到预览
+    store.preview = {
+      taskId: 'local_' + Date.now(),
+      frontUrl: imageUrl || photo.value?.base64 || '',
+      backUrl: '',
+      frontMime: imageUrl ? 'image/png' : (photo.value?.mime || 'image/jpeg'),
+      backMime: 'image/jpeg',
+      ratio: { ...ratio.value },
+      styleName: styleLabel.value,
+      sides: sides.value,
+      mode: mode.value,
+      title: title.value,
+      location: location.value,
+      date: date.value,
+      generatedText: text, // 保留 AI 返回的文字
+    }
+    setTimeout(() => uni.navigateTo({ url: '/pages/result/result' }), 300)
   } catch (e) {
     genStep.value = 0
-    uni.showToast({ title: e.message, icon: 'none' })
+    uni.showToast({ title: e.message || '生成失败', icon: 'none' })
   } finally {
     generating.value = false
   }
 }
-
-async function poll(taskId) {
-  const deadline = Date.now() + 180000
-  while (Date.now() < deadline) {
-    await sleep(2200)
-    const t = await request('/api/generation/' + taskId, { timeout: 30000 })
-    if (t.status === 'SUCCEEDED') {
-      genStep.value = 3
-      store.preview = {
-        taskId,
-        frontUrl: t.result.frontUrl,
-        backUrl: t.result.backUrl,
-        frontMime: t.result.frontMime,
-        backMime: t.result.backMime,
-        ratio: ratio.value,
-        styleName: styleLabel.value,
-        sides: sides.value,
-        mode: mode.value,
-        title: title.value,
-        location: location.value,
-        date: date.value,
-      }
-      setTimeout(() => uni.navigateTo({ url: '/pages/result/result' }), 300)
-      return
-    }
-    if (t.status === 'FAILED') { genStep.value = 0; throw new Error(t.message || '生成失败，请重试') }
-    genStep.value = t.message && t.message.indexOf('正面') >= 0 ? 1 : t.message && t.message.indexOf('背面') >= 0 ? 2 : 0
-    genStatus.value = t.message || '生成中…'
-  }
-  throw new Error('生成超时，请稍后重试')
-}
-function sleep(ms) { return new Promise((r) => setTimeout(r, ms)) }
 </script>
 
 <style lang="scss" scoped>
