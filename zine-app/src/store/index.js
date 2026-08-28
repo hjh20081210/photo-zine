@@ -96,16 +96,16 @@ const store = reactive({
       return
     }
 
-    // ③ 全新用户：添加默认免费模型（DeepSeek-V4-Flash-Vision）
+    // ③ 全新用户：添加默认免费模型（入梦 Flash）
     const defaultModel = {
-      id: 'cfg_default_deepseek_v4',
-      name: 'DeepSeek 免费模型',
+      id: 'cfg_default_rumeng',
+      name: '入梦 Flash',
       provider: 'openai',
       apiFormat: 'chat',
-      baseUrl: 'https://opencode.ai/zen/go/v1/chat/completions',
+      baseUrl: 'https://speed.toter.me',
       customPath: '',
-      apiKey: 'sk-vGh4DCVWctMEzhVoLlYe4uUfPEgOmVgaB8UkbVhPR8auMPB2qKixWmvuQqSFUeyU',
-      model: 'deepseek-v4-flash-vision-exp',
+      apiKey: 'sk-GjeCPWiTENHjn18RA51Uax6xjgQgbUfD4ixgXRom6p1dVcKI',
+      model: '入梦 Flash',
       imageInput: 'auto',
       createdAt: Date.now(),
     }
