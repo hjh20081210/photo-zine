@@ -1,16 +1,5 @@
 <template>
   <view class="page paper-bg">
-    <!-- H5兜底：常驻DOM的原生input（防止动态创建被iOS拦截） -->
-    <!-- #ifdef H5 -->
-    <input
-      id="zine-file-input"
-      type="file"
-      accept="image/*"
-      style="display:none"
-      @change="onH5FileChange"
-    />
-    <!-- #endif -->
-
     <!-- 顶部栏：与参考图完全一致 - 左上「Zine明信片创作」小衬线，大字「创作页」，右上搜索 -->
     <view class="nav-bar" :style="{ paddingTop: statusBarPad }">
       <view class="nav-left-inner">
@@ -419,20 +408,6 @@
         <view class="sheet-handle" />
         <text class="sheet-title serif">选择照片来源</text>
         <view class="sheet-btns">
-          <!-- #ifdef H5 -->
-          <!-- H5：用 label 触发原生 input，规避iOS安全拦截 -->
-          <label for="zine-file-input" class="sheet-btn">
-            <view class="sheet-ico">
-              <svg viewBox="0 0 24 24" width="44" height="44" fill="none" stroke="#C15837" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M4 8h3l2-2.5h6L17 8h3a1.5 1.5 0 0 1 1.5 1.5V18a1.5 1.5 0 0 1-1.5 1.5H4A1.5 1.5 0 0 1 2.5 18V9.5A1.5 1.5 0 0 1 4 8z" />
-                <circle cx="12" cy="13.5" r="3.6" />
-              </svg>
-            </view>
-            <text class="sheet-btn-txt">拍照/相册</text>
-          </label>
-          <!-- #endif -->
-          <!-- #ifndef H5 -->
-          <!-- App/小程序：走 uni.chooseImage 原生API -->
           <view class="sheet-btn" @click="onPickFromCamera">
             <view class="sheet-ico">
               <svg viewBox="0 0 24 24" width="44" height="44" fill="none" stroke="#C15837" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
@@ -452,7 +427,6 @@
             </view>
             <text class="sheet-btn-txt">相册</text>
           </view>
-          <!-- #endif -->
         </view>
         <view class="sheet-cancel" @click="showPickerSheet = false">
           <text>取消</text>
@@ -513,6 +487,9 @@ const showPickerSheet = ref(false)
 // 裁剪状态
 const showCropper = ref(false)
 const tempImagePath = ref('')
+// H5 临时存储 base64 数据（裁剪组件返回的是原路径，H5 需要 base64 做预览）
+const tempImageBase64 = ref('')
+const tempImageMime = ref('image/jpeg')
 
 // 参考图一致：预览Tab = 正面预览 / 背面预览
 const PREVIEW_OPTIONS = [
@@ -618,6 +595,9 @@ function formatDate() {
 
 onMounted(() => {
   loadMeta()
+  // #ifdef H5
+  setupH5FileInputs()
+  // #endif
 })
 
 async function loadMeta() {
@@ -654,25 +634,58 @@ function onPrivacyDecline() {
   }, 600)
 }
 
-// ------- 图片选择（H5用label + input兜底，App/小程序用uni.chooseImage） -------
+// ------- 图片选择 -------
 
-// H5 兜底：输入框变化时处理文件
-function onH5FileChange(e) {
-  const file = e.target?.files?.[0]
-  if (!file) {
+// H5 用原生 DOM 创建两个 file input（UniApp 的 input 组件不支持 type=file）
+// #ifdef H5
+let h5InputAlbum = null
+let h5InputCamera = null
+
+function setupH5FileInputs() {
+  // 相册 input
+  h5InputAlbum = document.createElement('input')
+  h5InputAlbum.type = 'file'
+  h5InputAlbum.accept = 'image/*'
+  h5InputAlbum.style.display = 'none'
+  h5InputAlbum.addEventListener('change', (e) => {
+    const file = e.target?.files?.[0]
+    if (!file) { e.target.value = ''; return }
+    handleH5File(file)
     e.target.value = ''
-    return
-  }
+  })
+  document.body.appendChild(h5InputAlbum)
+
+  // 拍照 input（带 capture 属性）
+  h5InputCamera = document.createElement('input')
+  h5InputCamera.type = 'file'
+  h5InputCamera.accept = 'image/*'
+  h5InputCamera.capture = 'environment'
+  h5InputCamera.style.display = 'none'
+  h5InputCamera.addEventListener('change', (e) => {
+    const file = e.target?.files?.[0]
+    if (!file) { e.target.value = ''; return }
+    handleH5File(file)
+    e.target.value = ''
+  })
+  document.body.appendChild(h5InputCamera)
+}
+
+function handleH5File(file) {
   showPickerSheet.value = false
-  // 直接读取文件预览
+  // 先读成 base64 用于预览
   fileToResult(file).then(img => {
-    photo.value = img
+    // 临时存为 blob URL 传给裁剪组件
+    const blobUrl = URL.createObjectURL(file)
+    tempImagePath.value = blobUrl
+    // 存 base64 数据
+    tempImageBase64.value = img.base64
+    tempImageMime.value = img.mime
+    showCropper.value = true
   }).catch(() => {
     uni.showToast({ title: '读取图片失败', icon: 'none' })
-  }).finally(() => {
-    e.target.value = '' // 重置input，支持重复选同一张图
   })
 }
+// #endif
 
 function onPickImage() {
   if (showPrivacy.value) {
@@ -685,6 +698,12 @@ function onPickImage() {
 // 拍照
 function onPickFromCamera() {
   showPickerSheet.value = false
+  // #ifdef H5
+  if (h5InputCamera) {
+    h5InputCamera.click()
+  }
+  // #endif
+  // #ifndef H5
   uni.chooseImage({
     count: 1,
     sizeType: ['compressed'],
@@ -695,11 +714,18 @@ function onPickFromCamera() {
     },
     fail: () => {},
   })
+  // #endif
 }
 
 // 相册
 function onPickFromAlbum() {
   showPickerSheet.value = false
+  // #ifdef H5
+  if (h5InputAlbum) {
+    h5InputAlbum.click()
+  }
+  // #endif
+  // #ifndef H5
   uni.chooseImage({
     count: 1,
     sizeType: ['compressed'],
@@ -710,6 +736,7 @@ function onPickFromAlbum() {
     },
     fail: () => {},
   })
+  // #endif
 }
 
 // 裁剪确认：上传到后端 + 本地预览
@@ -719,12 +746,32 @@ function onCropConfirm(e) {
 
   uni.showLoading({ title: '上传中...' })
 
-  // 先读 base64 保证预览不依赖网络
+  // 优先用 H5 里已存好的 base64（blob URL 可能被回收）
+  // #ifdef H5
+  if (tempImageBase64.value) {
+    photo.value = {
+      path: croppedPath,
+      base64: tempImageBase64.value,
+      mime: tempImageMime.value || 'image/jpeg',
+      size: 0,
+    }
+    tempImageBase64.value = ''
+    tempImageMime.value = 'image/jpeg'
+  } else {
+    fileToResultByPath(croppedPath).then(img => {
+      photo.value = { ...img, path: croppedPath }
+    }).catch(() => {
+      photo.value = { path: croppedPath, base64: '', mime: 'image/jpeg', size: 0 }
+    })
+  }
+  // #endif
+  // #ifndef H5
   fileToResultByPath(croppedPath).then(img => {
     photo.value = { ...img, path: croppedPath }
   }).catch(() => {
     photo.value = { path: croppedPath, base64: '', mime: 'image/jpeg', size: 0 }
   })
+  // #endif
 
   // 上传到后端
   uni.uploadFile({
