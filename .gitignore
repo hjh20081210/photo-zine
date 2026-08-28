@@ -1,0 +1,14 @@
+node_modules/
+dist/
+.env
+*.local
+cert/
+.DS_Store
+upload/
+*.log
+target/
+*.class
+*.jar
+.idea/
+*.iml
+.vscode/
